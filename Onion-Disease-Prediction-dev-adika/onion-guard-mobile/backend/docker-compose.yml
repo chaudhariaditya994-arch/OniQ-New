@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # ── Nginx Reverse Proxy + SSL ─────────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-etc:/etc/letsencrypt:ro
+      - certbot-var:/var/www/certbot:ro
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+  # ── Certbot (Let's Encrypt SSL) ───────────────────────────
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --quiet; done'"
+
+  # ── API Gateway ────────────────────────────────────────────
+  api-gateway:
+    build: ./api-gateway
+    expose:
+      - "8000"
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:8001
+      - DIAGNOSIS_SERVICE_URL=http://diagnosis-service:8002
+      - TREATMENT_SERVICE_URL=http://treatment-service:8003
+      - ANALYTICS_SERVICE_URL=http://analytics-service:8004
+      - STORAGE_SERVICE_URL=http://storage-service:8005
+    depends_on:
+      - auth-service
+      - diagnosis-service
+      - treatment-service
+      - analytics-service
+      - storage-service
+    restart: unless-stopped
+
+  # ── Auth Service ───────────────────────────────────────────
+  auth-service:
+    build: ./auth-service
+    expose:
+      - "8001"
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017}
+      - DATABASE_NAME=onionguard_auth
+      - JWT_SECRET=${JWT_SECRET:-}
+      - PORT=8001
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-smtp}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-OnionGuard}
+      - FEEDBACK_RECIPIENT=${FEEDBACK_RECIPIENT:-}
+    restart: unless-stopped
+
+  # ── Diagnosis Service ──────────────────────────────────────
+  diagnosis-service:
+    build: ./diagnosis-service
+    expose:
+      - "8002"
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017}
+      - DATABASE_NAME=onionguard_diagnosis
+      - PORT=8002
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-anthropic/claude-3-haiku}
+    restart: unless-stopped
+
+  # ── Treatment Service ──────────────────────────────────────
+  treatment-service:
+    build: ./treatment-service
+    expose:
+      - "8003"
+    environment:
+      - PORT=8003
+    restart: unless-stopped
+
+  # ── Analytics Service ──────────────────────────────────────
+  analytics-service:
+    build: ./analytics-service
+    expose:
+      - "8004"
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017}
+      - DATABASE_NAME=onionguard_analytics
+      - PORT=8004
+    restart: unless-stopped
+
+  # ── OniQ Storage Service ───────────────────────────────────
+  storage-service:
+    build: ./storage-service
+    expose:
+      - "8005"
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017}
+      - DATABASE_NAME=oniq_storage
+      - PORT=8005
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-oniq-gateway-secret-key}
+    restart: unless-stopped
+
+volumes:
+  certbot-etc:
+  certbot-var:

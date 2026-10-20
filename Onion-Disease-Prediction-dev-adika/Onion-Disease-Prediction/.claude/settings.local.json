@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo $TF_USE_LEGACY_KERAS)",
+      "Bash(/c/Users/user/Python312/python.exe -c \"import os; print\\(os.environ.get\\(''TF_USE_LEGACY_KERAS'', ''not set''\\)\\)\")"
+    ]
+  }
+}

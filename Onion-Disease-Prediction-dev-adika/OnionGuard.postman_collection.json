@@ -1,0 +1,560 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		"name": "OnionGuard API",
+		"description": "Production API for the OnionGuard mobile app at https://onion-guard.duckdns.org\n\n**Variables:**\n- `baseUrl` — production gateway URL\n- `testEmail` / `testPassword` — login credentials for chained requests\n- `adminEmail` — used by admin-only endpoints\n- `disease` — used by treatment endpoints (try `Alternaria`, `Bulb_Blight`, `Caterpillar`, `Fusarium`, `Healthy`, `Virosis`)\n- `language` — used by translate / voice endpoints (`en`, `tw`, `dg`, `ee`, `ha`)\n\n**Note on LLM endpoints:** The `/api/v1/llm/*` routes exist in the local codebase but are **not yet deployed** to production. Calls will return 404 until you push the updated diagnosis-service + api-gateway and update the server's `.env` with `GEMINI_API_KEY` / `OPENROUTER_API_KEY`.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "Gateway health",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/health",
+							"host": ["{{baseUrl}}"],
+							"path": ["health"]
+						},
+						"description": "Returns 200 if the API gateway is reachable. Does not test downstream services."
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Register",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"{{testEmail}}\",\n  \"phone\": \"0551234567\",\n  \"password\": \"{{testPassword}}\",\n  \"user_type\": \"Farmer\",\n  \"username\": \"testuser_{{$timestamp}}\",\n  \"language_preference\": \"en\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/register",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "register"]
+						},
+						"description": "Create a new user. `user_type` can be `Farmer` or `Admin` (only one admin allowed per system). `username` must be unique."
+					}
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const json = pm.response.json();",
+									"    if (json.token) {",
+									"        pm.collectionVariables.set('jwt', json.token);",
+									"        console.log('Saved JWT to {{jwt}}');",
+									"    }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\",\n  \"user_type\": \"Farmer\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/login",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "login"]
+						},
+						"description": "Returns `{success, token, user}`. The test script above auto-saves `token` into the `{{jwt}}` collection variable for use in later requests."
+					}
+				},
+				{
+					"name": "Get profile",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/profile/{{testEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "profile", "{{testEmail}}"]
+						},
+						"description": "Returns the user document for the given email (no password hash)."
+					}
+				},
+				{
+					"name": "Change password",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"old_password\": \"{{testPassword}}\",\n  \"new_password\": \"NewPass123!\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/change-password",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "change-password"]
+						},
+						"description": "Verifies `old_password`, then updates to `new_password`."
+					}
+				},
+				{
+					"name": "Forgot password (sends 6-digit code via email)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/forgot-password/{{testEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "forgot-password", "{{testEmail}}"]
+						},
+						"description": "Generates a 6-digit code, stores it with a 15-minute expiry, and emails it to the user via SMTP. **Always returns `{success: true}`** regardless of whether the email exists (anti-enumeration). The actual email arrives at the user's inbox — check the From `OnionGuard <SMTP_USER>` and the green-themed code box. After receiving the code, fire the next request below to set a new password."
+					}
+				},
+				{
+					"name": "Reset password (submit code + new password)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"code\": \"123456\",\n  \"new_password\": \"NewPass123!\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/reset-password",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "reset-password"]
+						},
+						"description": "Validates the 6-digit `code` against the latest unused code for `email`. If valid and not expired (15-min window), the user's password is updated to `new_password` (bcrypt-hashed). Returns 400 if code is wrong, expired, or already used. Replace `123456` in the body with the actual code from the email."
+					}
+				},
+				{
+					"name": "List all users (admin)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/users",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "users"]
+						},
+						"description": "Returns all users. Currently NOT auth-gated at the gateway — anyone who knows the URL can list users. Worth adding admin check."
+					}
+				},
+				{
+					"name": "Talk To Us (send feedback email)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"{{testEmail}}\",\n  \"subject\": \"App crashes during scan\",\n  \"message\": \"When I tap the scan button on Android 14 it freezes for 5 seconds then closes. Reproducible on a Tecno Camon 19.\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/feedback",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "feedback"]
+						},
+						"description": "Sends a branded HTML email to FEEDBACK_RECIPIENT (defaults to SMTP_USERNAME on the server) with the user's name, email, subject and message. Reply-To is set to the user's email so a direct reply from your inbox goes back to them. Subject in inbox: `[OnionGuard Feedback] <subject>`. Returns `{success: true}` on send, 502 on SMTP failure."
+					}
+				},
+				{
+					"name": "Toggle user active status (admin)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/users/{{adminEmail}}/toggle-status",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "users", "{{adminEmail}}", "toggle-status"]
+						},
+						"description": "Flips `is_active` for the target user. NOT auth-gated."
+					}
+				}
+			]
+		},
+		{
+			"name": "Diagnosis",
+			"item": [
+				{
+					"name": "Predict disease (image upload)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "Onion image (JPEG or PNG). Resized to 224x224 server-side before TFLite inference."
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/diagnosis/predict",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "diagnosis", "predict"]
+						},
+						"description": "Returns `{success, class_name, confidence, all_predictions}`. Classes: Alternaria, Bulb_Blight, Caterpillar, Fusarium, Healthy, Virosis."
+					}
+				},
+				{
+					"name": "Save diagnosis result",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"disease\": \"Fusarium\",\n  \"confidence\": 87.3,\n  \"all_predictions\": {\n    \"Alternaria\": 2.1,\n    \"Bulb_Blight\": 1.5,\n    \"Caterpillar\": 0.8,\n    \"Fusarium\": 87.3,\n    \"Healthy\": 6.2,\n    \"Virosis\": 2.1\n  }\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/diagnosis/save",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "diagnosis", "save"]
+						},
+						"description": "Stores a diagnosis record for the user. Used after the frontend gets a prediction and wants to persist it."
+					}
+				},
+				{
+					"name": "Diagnosis history",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/diagnosis/history/{{testEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "diagnosis", "history", "{{testEmail}}"]
+						},
+						"description": "Returns the last 50 diagnoses for this user, newest first."
+					}
+				}
+			]
+		},
+		{
+			"name": "LLM (NOT YET DEPLOYED)",
+			"description": "These endpoints are in the local codebase but production has not been redeployed yet. They will return 404 until you push the updated diagnosis-service.",
+			"item": [
+				{
+					"name": "Analyze freshness (Gemini Vision)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "Onion image. Backend forwards to Gemini Vision and returns parsed JSON."
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/llm/freshness",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "llm", "freshness"]
+						},
+						"description": "Returns `{freshness, confidence, description, tips}`. `freshness` ∈ {Fresh, Almost Spoilt, Rotten}."
+					}
+				},
+				{
+					"name": "Identify object (Gemini pre-check before scans)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "Any image. Backend asks Gemini Vision to identify the primary object and decide if it's an onion."
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/llm/identify-object",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "llm", "identify-object"]
+						},
+						"description": "Pre-check used by the app before sending images to disease/freshness scans. Returns `{detected_object: string, is_onion: bool, confidence: 0-100}`. The frontend blocks the scan and shows a friendly modal if `is_onion: false`. Try with an onion photo (expect `is_onion: true`) and with a tomato/random photo (expect `is_onion: false` with a sensible `detected_object`)."
+					}
+				},
+				{
+					"name": "Translate text (OpenRouter)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"text\": \"Water the onions twice a week and check for yellowing leaves.\",\n  \"target_language\": \"{{language}}\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/llm/translate",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "llm", "translate"]
+						},
+						"description": "Returns `{translated_text}`. `target_language` must be one of: en (no-op), tw (Twi), dg (Dagbani), ee (Ewe), ha (Hausa)."
+					}
+				}
+			]
+		},
+		{
+			"name": "Treatment",
+			"item": [
+				{
+					"name": "Get treatment for disease",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/treatment/{{disease}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "treatment", "{{disease}}"]
+						},
+						"description": "Returns treatment guidance for the disease (description, symptoms, treatment_steps, prevention) in all supported languages."
+					}
+				},
+				{
+					"name": "Treatment voice (audio)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/treatment/{{disease}}/voice/{{language}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "treatment", "{{disease}}", "voice", "{{language}}"]
+						},
+						"description": "Returns an MP3 stream of the treatment narration in the target language. In Postman, click 'Send and Download' to save the file."
+					}
+				}
+			]
+		},
+		{
+			"name": "Analytics",
+			"item": [
+				{
+					"name": "Log diagnosis event",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"disease\": \"Fusarium\",\n  \"confidence\": 87.3,\n  \"latitude\": 5.6037,\n  \"longitude\": -0.1870,\n  \"region\": \"Greater Accra\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/analytics/log",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "analytics", "log"]
+						},
+						"description": "Records a scan event for analytics. Lat/long/region are optional."
+					}
+				},
+				{
+					"name": "User analytics summary",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/analytics/summary/{{testEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "analytics", "summary", "{{testEmail}}"]
+						},
+						"description": "Returns total scans, healthy/diseased counts, most-frequent disease, and recent activity for the user."
+					}
+				},
+				{
+					"name": "Regional analytics",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/analytics/regional",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "analytics", "regional"]
+						},
+						"description": "Aggregated disease prevalence by region across all users."
+					}
+				},
+				{
+					"name": "All-users summary (admin)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/analytics/summary-all",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "analytics", "summary-all"]
+						},
+						"description": "Project-wide stats. NOT auth-gated."
+					}
+				},
+				{
+					"name": "All scans (admin)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/analytics/all-scans",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "analytics", "all-scans"]
+						},
+						"description": "Raw list of every diagnosis event. NOT auth-gated."
+					}
+				},
+				{
+					"name": "User timeseries (charts data)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/analytics/timeseries/{{testEmail}}?days=30",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "analytics", "timeseries", "{{testEmail}}"],
+							"query": [
+								{"key": "days", "value": "30", "description": "Window size (1-365)"}
+							]
+						},
+						"description": "Powers the analytics page charts. Returns: `{daily: [{date, healthy, diseased, total}, ...], weekday_pattern: {Mon: n, ...}, recent: [{disease, confidence, timestamp}, ...]}`. The `daily` array always has exactly `days` entries (zero-filled for days with no scans). `recent` is capped at the 5 most recent scans within the window."
+					}
+				}
+			]
+		},
+		{
+			"name": "Storage (OniQ)",
+			"item": [
+				{
+					"name": "Ingest telemetry",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "X-Gateway-Key", "value": "oniq-gateway-secret-key"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"device_id\": \"esp32-node-01\",\n  \"temperature\": 27.8,\n  \"humidity\": 67.2,\n  \"mq135_raw\": 640,\n  \"mq136_raw\": 360,\n  \"battery_pct\": 96.0,\n  \"rssi\": -60\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/telemetry",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "telemetry"]
+						},
+						"description": "Ingest real-time or buffered sensor readings from ESP32 or Raspberry Pi Gateway."
+					}
+				},
+				{
+					"name": "Create storage lot / batch",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_email\": \"{{testEmail}}\",\n  \"name\": \"Nashik Chawl Bay #1\",\n  \"structure_type\": \"Traditional Chawl (Naturally Ventilated)\",\n  \"variety\": \"Garwa (Rabi)\",\n  \"quantity_quintals\": 100.0,\n  \"location\": \"Lasalgaon, Nashik\",\n  \"device_id\": \"esp32-node-01\"\n}",
+							"options": {"raw": {"language": "json"}}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/batches",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "batches"]
+						}
+					}
+				},
+				{
+					"name": "List storage batches",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/batches?user_email={{testEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "batches"],
+							"query": [{"key": "user_email", "value": "{{testEmail}}"}]
+						}
+					}
+				},
+				{
+					"name": "Get current lot status & risk assessment",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/batches/demo-batch-01/current",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "batches", "demo-batch-01", "current"]
+						}
+					}
+				},
+				{
+					"name": "Get telemetry history for lot",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/batches/demo-batch-01/history?limit=50",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "batches", "demo-batch-01", "history"],
+							"query": [{"key": "limit", "value": "50"}]
+						}
+					}
+				},
+				{
+					"name": "Get AI storage advisory",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/batches/demo-batch-01/advisory",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "batches", "demo-batch-01", "advisory"]
+						}
+					}
+				},
+				{
+					"name": "Get active alerts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/storage/alerts/{{testEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "storage", "alerts", "{{testEmail}}"]
+						}
+					}
+				}
+			]
+		}
+	],
+	"variable": [
+		{"key": "baseUrl", "value": "https://onion-guard.duckdns.org", "type": "string"},
+		{"key": "testEmail", "value": "test@test.com", "type": "string"},
+		{"key": "testPassword", "value": "REPLACE_ME", "type": "string"},
+		{"key": "adminEmail", "value": "admin@example.com", "type": "string"},
+		{"key": "disease", "value": "Fusarium", "type": "string"},
+		{"key": "language", "value": "tw", "type": "string"},
+		{"key": "jwt", "value": "", "type": "string"}
+	]
+}

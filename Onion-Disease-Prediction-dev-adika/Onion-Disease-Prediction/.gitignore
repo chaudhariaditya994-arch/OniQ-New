@@ -1,0 +1,25 @@
+# Dataset (too large for git)
+TOM2024/
+TOM2024.zip
+
+# Output artifacts
+caterpillar_output/
+healthy_leaf_output/
+
+# PowerPoint temp files
+~$*.pptx
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Model files
+*.h5
+*.tflite
+*.pb
+saved_model/
+
+# Environment
+.env
+venv/
